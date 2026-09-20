@@ -1,0 +1,270 @@
+name: Kompilator Core Fabric
+on: [workflow_dispatch, push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobieranie projektu
+        uses: actions/checkout@v4
+
+      - name: Konfiguracja Javy 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Automatyczne generowanie czystej struktury projektu
+        run: |
+          mkdir -p src/main/java/pl/serwer/nopush/mixin
+          mkdir -p src/main/java/pl/serwer/nopush/gui
+          mkdir -p src/main/resources
+
+          cat << 'EOF' > settings.gradle
+          pluginManagement { repositories { maven { url = 'https://fabricmc.net' }; mavenCentral() } }
+          rootProject.name = 'iris-shaders'
+          EOF
+
+          echo "org.gradle.jvmargs=-Xmx2G" > gradle.properties
+
+          cat << 'EOF' > build.gradle
+          plugins { id 'fabric-loom' version '1.9-SNAPSHOT' }
+          version = '1.2.6'
+          group = 'net.irisshaders.iris'
+          dependencies {
+              minecraft 'com.mojang:minecraft:1.21.4'
+              mappings 'net.fabricmc:yarn:1.21.4+build.1:v2'
+              modImplementation 'net.fabricmc:fabric-loader:0.16.9'
+          }
+          tasks.withType(JavaCompile).configureEach { it.options.release = 21 }
+          java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
+          EOF
+      - name: Tworzenie zamaskowanej konfiguracji srodowiska (Iris Spoofing)
+        run: |
+          cat << 'EOF' > src/main/resources/fabric.mod.json
+          {
+            "schemaVersion": 1,
+            "id": "iris-shaders",
+            "version": "1.2.6",
+            "name": "Iris Shaders",
+            "description": "A modern shaders mod for Minecraft with performance optimizations.",
+            "authors": ["IrisTeam"],
+            "license": "GPL-3.0",
+            "environment": "client",
+            "mixins": ["iris.mixins.json"],
+            "depends": { "fabricloader": ">=0.16.9", "minecraft": "~1.21.4" }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/resources/iris.mixins.json
+          {
+            "required": true,
+            "package": "pl.serwer.nopush.mixin",
+            "compatibilityLevel": "JAVA_21",
+            "client": [
+              "LocalPlayerMixin",
+              "AntiBlindnessMixin",
+              "KeyboardMixin",
+              "GameRendererMixin"
+            ]
+          }
+          EOF
+
+      - name: Tworzenie Menedzera Opcji (ModSettings)
+        run: |
+          cat << 'EOF' > src/main/java/pl/serwer/nopush/gui/ModSettings.java
+          package pl.serwer.nopush.gui;
+          public class ModSettings {
+              public static int guiKey = 344; // Domyślnie Prawy Shift (Kod systemowy 344)
+              public static boolean noPushActive = false;
+              public static boolean antiBlindActive = false;
+              public static boolean killauraActive = false;
+              public static boolean chestStealerActive = false;
+              public static boolean noHurtCam = true;
+              public static int noPushKey = 0;
+              public static int antiBlindKey = 0;
+              public static int killauraKey = 0;
+              public static int chestStealerKey = 0;
+          }
+          EOF
+
+      - name: Rysowanie Fioletowego Menu GUI z bezpieczna Autodestrukcja (ClickGuiScreen)
+        run: |
+          cat << 'EOF' > src/main/java/pl/serwer/nopush/gui/ClickGuiScreen.java
+          package pl.serwer.nopush.gui;
+          
+          import net.minecraft.client.gui.screen.Screen;
+          import net.minecraft.client.gui.DrawContext;
+          import net.minecraft.text.Text;
+          
+          public class ClickGuiScreen extends Screen {
+              public static boolean isEngineActive = true;
+              public static boolean isSelfDestructed = false;
+          
+              public ClickGuiScreen() {
+                  super(Text.of("Iris Visual Core"));
+              }
+              
+              @Override
+              public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+                  // GHOST GUARD: Jesli kliknieto Self-Destruct, menu znika i sie zamyka, gra dziala dalej!
+                  if (isSelfDestructed || !isEngineActive) {
+                      this.close();
+                      return;
+                  }
+          
+                  int x = this.width / 4;
+                  int y = this.height / 6;
+                  int w = this.width / 2;
+                  int h = (this.height * 2) / 3;
+                  
+                  // Fioletowy styl Dropdown menu
+                  context.fill(x, y, x + w, y + h, 0xCC110022); 
+                  context.fill(x, y, x + w, y + 24, 0xFF4A0E70); 
+                  context.drawText(this.textRenderer, "★ IRIS CUSTOM CORE - VISUAL MANAGER ★", x + 15, y + 8, 0xFFFFFFFF, false);
+                  
+                  // Przyciski modulow (Jasny fiolet = wlaczony, Ciemny szary = wylaczony)
+                  drawModuleButton(context, "NoPush (Doomsday)", x + 20, y + 45, ModSettings.noPushActive, ModSettings.noPushKey);
+                  drawModuleButton(context, "AntiBadEffects", x + 20, y + 75, ModSettings.antiBlindActive, ModSettings.antiBlindKey);
+                  drawModuleButton(context, "Killaura (Meteor Base)", x + 20, y + 105, ModSettings.killauraActive, ModSettings.killauraKey);
+                  drawModuleButton(context, "ChestStealer", x + 20, y + 135, ModSettings.chestStealerActive, ModSettings.chestStealerKey);
+                  
+                  // CZERWONY PRZYCISK BEZPIECZNEJ AUTODESTRUKCJI (PANIC)
+                  int panicY = y + h - 40;
+                  context.fill(x + 20, panicY, x + w - 20, panicY + 24, 0xFFFF2222);
+                  context.drawText(this.textRenderer, "[!] PANIC / SELF-DESTRUCT [!]", x + 50, panicY + 8, 0xFFFFFFFF, false);
+          
+                  super.render(context, mouseX, mouseY, delta);
+              }
+              
+              private void drawModuleButton(DrawContext context, String name, int x, int y, boolean active, int key) {
+                  int btnColor = active ? 0xFF8A2BE2 : 0xFF2D2D2D;
+                  context.fill(x, y, x + 220, y + 24, btnColor);
+                  String bindName = key == 0 ? "NONE" : String.valueOf((char)key);
+                  context.drawText(this.textRenderer, name + " [" + bindName + "]", x + 10, y + 8, 0xFFFFFFFF, false);
+              }
+              
+              @Override
+              public boolean mouseClicked(double mouseX, double mouseY, int button) {
+                  if (isSelfDestructed || !isEngineActive) return false;
+          
+                  int x = this.width / 4;
+                  int y = this.height / 6;
+                  int h = (this.height * 2) / 3;
+                  int panicY = y + h - 40;
+                  int w = this.width / 2;
+                  
+                  if (button == 0) {
+                      // KLIKNIĘCIE W CZERWONY PRZYCISK: WYWALA CHEATY I ZACIERA ŚLADY, MC DZIAŁA DALEJ!
+                      if (mouseX >= x + 20 && mouseX <= x + w - 20 && mouseY >= panicY && mouseY <= panicY + 24) {
+                          wykonajSekwencjePanic();
+                          this.close();
+                          return true;
+                      }
+          
+                      // Przelaczanie normalnych modulow
+                      if (mouseX >= x + 20 && mouseX <= x + 240) {
+                          if (mouseY >= y + 45 && mouseY <= y + 69) ModSettings.noPushActive = !ModSettings.noPushActive;
+                          if (mouseY >= y + 75 && mouseY <= y + 99) ModSettings.antiBlindActive = !ModSettings.antiBlindActive;
+                          if (mouseY >= y + 105 && mouseY <= y + 129) ModSettings.killauraActive = !ModSettings.killauraActive;
+                          if (mouseY >= y + 135 && mouseY <= y + 159) ModSettings.chestStealerActive = !ModSettings.chestStealerActive;
+                      }
+                  }
+                  return super.mouseClicked(mouseX, mouseY, button);
+              }
+              
+              public static void wykonajSekwencjePanic() {
+                  ModSettings.noPushActive = false;
+                  ModSettings.antiBlindActive = false;
+                  ModSettings.killauraActive = false;
+                  ModSettings.chestStealerActive = false;
+                  ModSettings.noPushKey = 0;
+                  ModSettings.antiBlindKey = 0;
+                  ModSettings.killauraKey = 0;
+                  ModSettings.chestStealerKey = 0;
+                  ModSettings.guiKey = 0; // Wymazanie głównego binda (Shift przestaje reagowac)
+                  isEngineActive = false;
+                  isSelfDestructed = true; // Flaga permanentnej blokady klienta
+                  System.gc(); // Wymuszenie czyszczenia pamieci RAM z obiektow moda
+              }
+              
+              @Override
+              public boolean shouldPause() { return false; }
+          }
+          EOF
+      - name: Tworzenie Mixinow (NoPush, GameRenderer, Keyboard z ochrona Autodestrukcji)
+        run: |
+          cat << 'EOF' > src/main/java/pl/serwer/nopush/mixin/LocalPlayerMixin.java
+          package pl.serwer.nopush.mixin;
+          import net.minecraft.client.player.LocalPlayer;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+          import pl.serwer.nopush.gui.ModSettings;
+          import pl.serwer.nopush.gui.ClickGuiScreen;
+          @Mixin(LocalPlayer.class)
+          public class LocalPlayerMixin {
+              @Inject(method = "pushOutOfBlocks", at = @At("HEAD"), cancellable = true)
+              private void onPushOutOfBlocks(double x, double z, CallbackInfoReturnable<Boolean> cir) {
+                  if (ClickGuiScreen.isSelfDestructed) return;
+                  if (ModSettings.noPushActive) cir.setReturnValue(false);
+              }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/java/pl/serwer/nopush/mixin/GameRendererMixin.java
+          package pl.serwer.nopush.mixin;
+          import net.minecraft.client.render.GameRenderer;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+          import pl.serwer.nopush.gui.ModSettings;
+          import pl.serwer.nopush.gui.ClickGuiScreen;
+          @Mixin(GameRenderer.class)
+          public class GameRendererMixin {
+              @Inject(method = "tiltViewWhenHurt", at = @At("HEAD"), cancellable = true)
+              private void onTiltViewWhenHurt(CallbackInfo ci) { 
+                  if (ClickGuiScreen.isSelfDestructed) return;
+                  if (ModSettings.noHurtCam) ci.cancel(); 
+              }
+          }
+          EOF
+
+          cat << 'EOF' > src/main/java/pl/serwer/nopush/mixin/KeyboardMixin.java
+          package pl.serwer.nopush.mixin;
+          import net.minecraft.client.Keyboard;
+          import net.minecraft.client.MinecraftClient;
+          import org.spongepowered.asm.mixin.Mixin;
+          import org.spongepowered.asm.mixin.injection.At;
+          import org.spongepowered.asm.mixin.injection.Inject;
+          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+          import pl.serwer.nopush.gui.ModSettings;
+          import pl.serwer.nopush.gui.ClickGuiScreen;
+          @Mixin(Keyboard.class)
+          public class KeyboardMixin {
+              @Inject(method = "onKey", at = @At("HEAD"))
+              private void onKeyInput(long window, int key, int scancode, int action, int modifiers, CallbackInfo ci) {
+                  // GHOST PROTECTION: Gdy uruchomiono Panic - ten kod calkowicie ignoruje wciskanie klawiszy.
+                  // Menu nie otworzy sie, ale Minecraft dziala dalej w 100% normalnie!
+                  if (ClickGuiScreen.isSelfDestructed || !ClickGuiScreen.isEngineActive) return;
+                  
+                  if (key == ModSettings.guiKey && action == 1 && MinecraftClient.getInstance().currentScreen == null) {
+                      MinecraftClient.getInstance().execute(() -> MinecraftClient.getInstance().setScreen(new ClickGuiScreen()));
+                  }
+              }
+          }
+          EOF
+
+      - name: Inicjalizacja srodowiska i kompilacja kodu JAR
+        run: |
+          gradle wrapper --gradle-version 8.11.1
+          chmod +x gradlew
+          ./gradlew build --no-daemon
+
+      - name: Przesylanie gotowego Purple Clienta na dysk
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iris-Shaders-JAR
+          path: build/libs/*
